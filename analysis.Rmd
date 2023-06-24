@@ -1,0 +1,141 @@
+---
+title: "Storm Data Analysis"
+author: "Bhavneet Singh"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+\
+This project is done as part of Coursera's Reproducible Research project-2. In this project, we analyse the **storm data**. Storm Data is an official publication of the *National Oceanic and Atmospheric Administration* (**NOAA**) which documents:\
+a. The occurrence of storms and other significant weather phenomena having sufficient intensity to cause loss of life, injuries, significant property damage, and/or disruption to commerce;\
+b. Rare, unusual, weather phenomena that generate media attention, such as snow flurries in South Florida or the San Diego coastal area; and\
+c. Other significant meteorological events, such as record maximum or minimum temperatures or precipitation that occur in connection with another event.\
+We aim to find the events that do make the most impact on **population health** and do the most **economic damage**.
+
+# Data Processing
+Load the data into RStudio.
+```{r cache=TRUE, warning=FALSE, message=FALSE}
+url <- "https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+if(!file.exists("storm.csv")){
+  download.file(url, destfile = "storm_data")
+  storm <- read.csv("storm_data")
+  dim(storm)
+}
+```
+Now we have the data in **storm** variable. The dataset has **902297** observations of **37** variables. Let's take a look at part of it.
+```{r cache=TRUE}
+storm[1:5, 1:5]
+```
+The column names seem unappropriate. Let's change them into titles.
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+library(stringr)
+colnames(storm) <- str_to_title(colnames(storm))
+colnames(storm) <- str_replace_all(colnames(storm), '_', '.')
+names(storm)[1:10]
+```
+
+# What We Need To Find?
+There are two questions of importance here:\
+1. Across the United States, which types of events (as indicated by Evtype variable) are most harmful with respect to **population health**? and\
+2. Across the United States, which types of events have the greatest **economic consequences**?\
+\
+So, an impact on **population health** can be measured by the total number of **fatalities** and **injuries** sustained due to an event. The greater this number, the greater is the impact of the event on **population health**.\
+Secondly, **economic consequences** due to an event are the damage to property and crops done by it. This is also provided in the **storm** data.\
+
+## Events Affecting Population Health
+First, find out the total number of fatalities and injuries combined by any event.
+```{r population.health, cache=TRUE, message=FALSE, warning=FALSE}
+#create a secondary dataframe
+library(dplyr)
+pop_health <- storm %>% group_by(Evtype) %>% reframe(Evtype, Impact = sum(Fatalities, Injuries)) %>% unique() %>% arrange(desc(Impact))
+head(pop_health)
+```
+Clearly, eventtype **Tornado** has the most impact on population health.\
+We can use the table command to see what values are constituting the **Impact** column in **pop_health**.
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+table(pop_health$Impact)
+quantile(pop_health$Impact, probs = .99)
+```
+There are a lot of event types with no impact, i.e. 0 value. Let's remove those and make a plot of the rest to see the ones with maximum impact. For the plot we will take only the top **1 percent** of observations.
+```{r impact, cache=TRUE, message=FALSE, warning=FALSE}
+library(ggplot2)
+library(RColorBrewer)
+colors <- colorRampPalette(c("orange", "blue"))(10)
+g <- ggplot(pop_health[pop_health$Impact > 1407.72, ], aes(abbreviate(Evtype), Impact))
+g <- g + geom_bar(stat = 'identity', fill = colors, color = 'black')
+g <- g + geom_label(aes(label = Impact), vjust = "inward")
+g <- g + labs(x = "Event Type", y = "Net Fatalities and Injuries", title = "Event Impact On Population Health", subtitle = "Bars Represent Total Fatalities and Injuries From an Event", caption = url)
+g 
+```
+\
+The graph shows that among the eventtypes that does the most damage to population health are **tornadoes**, **Excessive Heat**, **TSTM Wind**, **Flood**, **Lightnings**, **Heat**, etc.
+
+## Economic Impact of Events
+The **economic** impact can be broken down into two parts. First is damage to property and second is damage to crops. Both combined give the net damage estimate. Also the data provided is coded for damage with expressions like 'k' for thousands, 'B' for billions, etc. There are some missing and wrong expressions too which we are going to ignore.
+```{r cache=TRUE, message=FALSE, warning=FALSE}
+eco_dmg <- storm %>% group_by(Evtype) %>% reframe(Evtype, Propdmg, Propdmgexp, Cropdmg, Cropdmgexp)
+head(eco_dmg)
+```
+As we can see that the actual dollar amounts are given with an expressions that need to be considered while making damage measures. For this, we change the labels into what they represent and remove unknown symbols like '+', '-' and '?'. Then making computations on actual damage measures.
+```{r economic.dmg, cache=TRUE, message=FALSE, warning=FALSE}
+#Create a factor rplc that will replace the factor levels with labels
+table(eco_dmg$Propdmgexp)
+table(eco_dmg$Cropdmgexp)
+```
+We are going to assume that *M* is similar to *m* and *h* is that to *H*. *NA* expression will be replaced by 1.
+```{r replace, cache=TRUE, message=FALSE, warning=FALSE}
+#change the property damage expression column
+eco_dmg$Propdmgexp <- factor(eco_dmg$Propdmgexp, levels = c("", "-", "?", "+", "0", "1", "2", "3", "4", "5", "6", "7", "8", "B", "h", "H", "K", "m", "M"), labels = c("1", "0", "0", "0", "1", "10", "100", "1000", "10000", "100000", "1000000", "10000000", "100000000", "1000000000", "100", "100", "1000", "1000000", "1000000"))
+
+#change the crop damage expression column
+eco_dmg$Cropdmgexp <- factor(eco_dmg$Cropdmgexp, levels = c("", "?", "0", "2", "B", "k", "K", "m", "M"), labels = c("1", "0", "1", "100", "1000000000", "1000", "1000", "1000000", "1000000"))
+
+#see the change
+head(eco_dmg, 3)
+```
+Now just multiply the dollar amount with changed expression to get actual damage (in dollars).
+```{r damage, cache=TRUE, message=FALSE, warning=FALSE}
+eco_dmg$Propdmgexp <- as.numeric(as.character(eco_dmg$Propdmgexp))
+eco_dmg$Cropdmgexp <- as.numeric(as.character(eco_dmg$Propdmgexp))
+eco_dmg <- eco_dmg %>% mutate(Net.prop.dmg = Propdmg*Propdmgexp, Net.crop.dmg = Cropdmg*Cropdmgexp)
+head(eco_dmg)
+
+#lets take a combined look at event types now
+eco_dmg <- eco_dmg %>% group_by(Evtype) %>% summarise(Evtype = str_trim(Evtype), Net.Prop.Dmg = sum(Net.prop.dmg), Net.Crop.Dmg = sum(Net.crop.dmg)) %>% arrange(desc(Net.Prop.Dmg), desc(Net.Crop.Dmg)) %>% unique()
+
+#Remove values with 0 damage
+eco_dmg <- eco_dmg[eco_dmg$Net.Prop.Dmg != 0 | eco_dmg$Net.Crop.Dmg != 0, ]
+eco_dmg$Evtype <- str_replace(eco_dmg$Evtype, "HURRICANE/TYPHOON", "TYPHOON")
+head(eco_dmg)
+```
+Now lets make a plot for top values showing property damage.
+```{r plot, cache=TRUE, warning=FALSE, message=FALSE}
+f <- ggplot(eco_dmg[1:10, ], aes(abbreviate(Evtype), Net.Prop.Dmg))
+f <- f + geom_bar(stat = 'identity', fill = colors, color = 'black')
+f <- f + labs(title = "Aggregate Property Damage Due to Events", subtitle = "Including Top Contributing Event Types", caption = url, x = "Event Type", y = "Property Damage (In Billion Dollars)")
+f <- f + geom_label(aes(label = paste(round(Net.Prop.Dmg/1000000000, 2), "B", sep = "")), vjust = "inward")
+f
+```
+\
+Another one for the crop damagae.
+```{r plot2, cache=TRUE, message=FALSE, warning=F}
+eco_dmg <- eco_dmg %>% arrange(desc(Net.Crop.Dmg))
+head(eco_dmg)
+k <- ggplot(eco_dmg[1:10, ], aes(abbreviate(Evtype), Net.Crop.Dmg))
+k <- k + geom_bar(stat = 'identity', fill = colorRampPalette(c('gold', 'purple'))(10), color = 'black')
+k <- k + geom_label(aes(label = paste(round(Net.Crop.Dmg/1000000000, 2), "B", sep = "")), vjust = "inward")
+k <- k + labs(title = "Aggregate Crop Damage Due to Events", subtitle = "Including Top Contributing Event Types", caption = url, x = "Event Type", y = "Crop Damage (In Billion Dollars)")
+k
+```
+\
+Results are given below.
+
+# Results
+1. The event types that make the largest impact on population health (measured by the aggregate number of fatalities and injuries) include **Tornado**, **Excessive Heat**, **TSTM Wind**, **Flood**, **Lightnings** and **Heat** accounting for **96979**, **8428**, etc., fatalities/injuries respectively.\
+\
+2. Economic damage is divided into two categories; property and crop damages.\
+Property damage is done most by event types like **Flood** with a aggregate damage of **144.66 billion $**, followed by **Typhoons** with a net damage of **69.31 billion $** and then by **Tornadoes**, **Storm Surge**, **Flash floods**, etc.\
+On the other hand, the event types that contribute the most to crop damage estimates are **Hurricanes** and **Typhoons** with a combines estimate of **1535 billion $** followed by **Floods (87.25 billion $)** and other less severe events.
